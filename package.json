@@ -1,3 +1,9 @@
+// Ready-to-deploy Next.js (App Router) project
+// Copy these files into a repo and deploy to Vercel/Netlify/Cloudflare Pages
+
+// ============================
+// package.json
+// ============================
 {
   "name": "engineering-status-dashboard",
   "private": true,
@@ -22,3 +28,552 @@
     "typescript": "^5.5.4"
   }
 }
+
+// ============================
+// next.config.mjs
+// ============================
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+}
+export default nextConfig
+
+// ============================
+// tsconfig.json
+// ============================
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+
+// ============================
+// postcss.config.js
+// ============================
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+
+// ============================
+// tailwind.config.ts
+// ============================
+import type { Config } from 'tailwindcss'
+export default {
+  content: [
+    './app/**/*.{js,ts,jsx,tsx}',
+    './components/**/*.{js,ts,jsx,tsx}',
+  ],
+  theme: { extend: {} },
+  plugins: [],
+} satisfies Config
+
+// ============================
+// app/layout.tsx
+// ============================
+import './globals.css'
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'ENGINEERING STATUS – MATERIAL SUBMISSION',
+  description: 'Interactive dashboard for materials status',
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="bg-gray-100 print:bg-white">{children}</body>
+    </html>
+  )
+}
+
+// ============================
+// app/page.tsx
+// ============================
+import EngineeringStatusDashboard from "@/components/EngineeringStatusDashboard";
+
+export default function Page() {
+  return <EngineeringStatusDashboard />;
+}
+
+// ============================
+// components/EngineeringStatusDashboard.tsx
+// ============================
+'use client'
+import React, { useMemo, useRef, useState } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  LabelList,
+  Cell,
+} from "recharts";
+import * as htmlToImage from "html-to-image";
+
+/**
+ * ENGINEERING STATUS – MATERIAL SUBMISSION (Interactive Dashboard)
+ * Tech stack: Next.js (App Router), TailwindCSS, Recharts
+ *
+ * Components in this file:
+ *  - EngineeringStatusDashboard (default export)
+ *  - Panel
+ *  - SummaryTable
+ *
+ * Features:
+ *  - Three side-by-side panels (CIVIL, MEP, MEDICAL EQUIPMENT) that stack on mobile
+ *  - Each panel renders horizontal bars for: Total, Planned, Submitted, A, B, C, D, UR, UR > 14 Days
+ *  - Shared color legend across all panels
+ *  - Editable number inputs that live-update charts and the summary table
+ *  - Validation for non-negative integers
+ *  - "Reset to Sample Data", "Export PNG" (whole dashboard), and "Download CSV"
+ *  - Clean print-friendly cards with soft shadows and rounded corners
+ */
+
+// ---- Color Legend (consistent across all panels) ----
+const COLORS: Record<string, string> = {
+  Total: "#A7F3D0", // light green
+  Planned: "#3B82F6", // blue
+  Submitted: "#4682B4", // steel blue
+  A: "#22C55E", // green
+  B: "#8B5CF6", // purple
+  C: "#60A5FA", // light blue
+  D: "#EF4444", // red
+  UR: "#9CA3AF", // gray
+  UR14: "#F59E0B", // orange
+};
+
+// Keys and display labels in the order requested
+const METRIC_ORDER: { key: MetricKey; label: string }[] = [
+  { key: "Total", label: "Total" },
+  { key: "Planned", label: "Planned" },
+  { key: "Submitted", label: "Submitted" },
+  { key: "A", label: "Approved (A)" },
+  { key: "B", label: "Approved with Comments (B)" },
+  { key: "C", label: "Revise & Resubmit (C)" },
+  { key: "D", label: "Rejected (D)" },
+  { key: "UR", label: "Under Review (UR)" },
+  { key: "UR14", label: "UR > 14 Days" },
+];
+
+type MetricKey =
+  | "Total"
+  | "Planned"
+  | "Submitted"
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "UR"
+  | "UR14";
+
+type SectionKey = "CIVIL" | "MEP" | "MEDICAL EQUIPMENT";
+
+export type SectionData = Record<MetricKey, number>;
+
+// ---- Seeded Sample Data (as requested) ----
+const SAMPLE_DATA: Record<SectionKey, SectionData> = {
+  CIVIL: {
+    Total: 120,
+    Planned: 110,
+    Submitted: 59,
+    A: 0,
+    B: 32,
+    C: 17,
+    D: 5,
+    UR: 5,
+    UR14: 0,
+  },
+  MEP: {
+    Total: 115,
+    Planned: 115,
+    Submitted: 102,
+    A: 0,
+    B: 84,
+    C: 13,
+    D: 0,
+    UR: 5,
+    UR14: 0,
+  },
+  "MEDICAL EQUIPMENT": {
+    Total: 142,
+    Planned: 142,
+    Submitted: 88,
+    A: 0,
+    B: 31,
+    C: 15,
+    D: 26,
+    UR: 16,
+    UR14: 0,
+  },
+};
+
+// ---- Utility: deep clone sample ----
+const deepCopy = <T,>(obj: T): T => JSON.parse(JSON.stringify(obj));
+
+// ---- Input validation helpers ----
+function clampToNonNegativeInteger(value: string | number): number {
+  if (value === "") return 0;
+  let n = Number(value);
+  if (!Number.isFinite(n) || Number.isNaN(n)) return 0;
+  if (n < 0) n = 0;
+  n = Math.round(n);
+  return n;
+}
+
+// ---- Main Exported Component ----
+const EngineeringStatusDashboard: React.FC = () => {
+  const [data, setData] = useState<Record<SectionKey, SectionData>>(
+    deepCopy(SAMPLE_DATA)
+  );
+
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  const handleReset = () => setData(deepCopy(SAMPLE_DATA));
+
+  // CSV download (all metrics for all sections)
+  const handleDownloadCSV = () => {
+    const headers = [
+      "Section",
+      ...METRIC_ORDER.map((m) => m.label),
+    ];
+
+    const rows = (Object.keys(data) as SectionKey[]).map((section) => {
+      const d = data[section];
+      return [
+        section,
+        ...METRIC_ORDER.map((m) => String(d[m.key] ?? 0)),
+      ];
+    });
+
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("
+");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `materials-status.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Export PNG of the whole dashboard area
+  const handleExportPNG = async () => {
+    if (!exportRef.current) return;
+    const node = exportRef.current;
+    const dataUrl = await htmlToImage.toPng(node, { pixelRatio: 2 });
+    const link = document.createElement("a");
+    link.download = "engineering-status-dashboard.png";
+    link.href = dataUrl;
+    link.click();
+  };
+
+  // Legend component
+  const Legend: React.FC = () => (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      {METRIC_ORDER.map((m) => (
+        <div key={m.key} className="flex items-center gap-2 text-sm">
+          <span
+            className="inline-block h-3 w-3 rounded"
+            style={{ backgroundColor: COLORS[m.key] }}
+          />
+          <span className="text-gray-700">{m.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Shared change handler for number inputs
+  const updateValue = (
+    section: SectionKey,
+    key: MetricKey,
+    value: string
+  ) => {
+    setData((prev) => {
+      const next = deepCopy(prev);
+      next[section][key] = clampToNonNegativeInteger(value);
+      return next;
+    });
+  };
+
+  // Prepare table rows from current state
+  const tableRows = useMemo(() => {
+    return (Object.keys(data) as SectionKey[]).map((section) => {
+      const d = data[section];
+      return {
+        section,
+        Total: d.Total,
+        Submitted: d.Submitted,
+        UR: d.UR,
+        D: d.D,
+        C: d.C,
+        B: d.B,
+        A: d.A,
+      };
+    });
+  }, [data]);
+
+  return (
+    <div className="min-h-screen bg-gray-100 p-4 print:bg-white">
+      {/* Header */}
+      <div className="max-w-7xl mx-auto mb-4">
+        <div className="flex items-center justify-between bg-white rounded-2xl shadow p-4 print:shadow-none">
+          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">
+            ENGINEERING STATUS – MATERIAL SUBMISSION
+          </h1>
+          {/* Placeholder logo */}
+          <div className="h-10 w-28 bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 text-xs">
+            LOGO
+          </div>
+        </div>
+      </div>
+
+      {/* Actions & Legend */}
+      <div className="max-w-7xl mx-auto mb-4">
+        <div className="bg-white rounded-2xl shadow p-4 flex flex-col gap-4 print:shadow-none">
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+            <div className="flex gap-2 flex-wrap">
+              <button
+                className="px-3 py-2 bg-gray-900 text-white rounded-xl shadow hover:opacity-90"
+                onClick={handleReset}
+              >
+                Reset to Sample Data
+              </button>
+              <button
+                className="px-3 py-2 bg-blue-600 text-white rounded-xl shadow hover:opacity-90"
+                onClick={handleExportPNG}
+              >
+                Export PNG
+              </button>
+              <button
+                className="px-3 py-2 bg-emerald-600 text-white rounded-xl shadow hover:opacity-90"
+                onClick={handleDownloadCSV}
+              >
+                Download CSV
+              </button>
+            </div>
+            <div className="text-sm text-gray-500">
+              Live-edit the values below to update charts & table.
+            </div>
+          </div>
+          <Legend />
+        </div>
+      </div>
+
+      {/* Exportable area starts here */}
+      <div ref={exportRef} className="max-w-7xl mx-auto space-y-4">
+        {/* Panels */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {(Object.keys(data) as SectionKey[]).map((section) => (
+            <Panel
+              key={section}
+              title={section}
+              sectionData={data[section]}
+              onChange={(key, value) => updateValue(section, key, value)}
+            />
+          ))}
+        </div>
+
+        {/* Summary Table */}
+        <SummaryTable rows={tableRows} />
+      </div>
+    </div>
+  );
+};
+
+export default EngineeringStatusDashboard;
+
+// ---------------- Panel ----------------
+const Panel: React.FC<{
+  title: string;
+  sectionData: SectionData;
+  onChange: (key: MetricKey, value: string) => void;
+}> = ({ title, sectionData, onChange }) => {
+  const chartData = useMemo(
+    () =>
+      METRIC_ORDER.map((m) => ({
+        name: m.label,
+        key: m.key,
+        value: sectionData[m.key] ?? 0,
+        fill: COLORS[m.key],
+      })),
+    [sectionData]
+  );
+
+  const maxVal = useMemo(() => Math.max(...chartData.map((d) => d.value), 0), [chartData]);
+
+  return (
+    <div className="bg-white rounded-2xl shadow p-4 flex flex-col gap-4 print:shadow-none">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+      </div>
+
+      {/* Chart */}
+      <div className="h-[360px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis type="number" domain={[0, maxVal]} allowDecimals={false} />
+            <YAxis type="category" dataKey="name" width={180} />
+            <Tooltip formatter={(val: any) => [val, ""]} />
+            <Bar dataKey="value" isAnimationActive={false}>
+              {chartData.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={entry.fill} />
+              ))}
+              <LabelList dataKey="value" position="right" />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Inputs */}
+      <div>
+        <h3 className="text-sm font-medium text-gray-700 mb-2">Edit Counts</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {METRIC_ORDER.map((m) => (
+            <div key={m.key} className="flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded shrink-0" style={{ backgroundColor: COLORS[m.key] }} />
+              <label className="text-sm text-gray-700 w-48">{m.label}</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={sectionData[m.key]}
+                onChange={(e) => onChange(m.key, e.target.value)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------------- Summary Table ----------------
+const SummaryTable: React.FC<{
+  rows: {
+    section: string;
+    Total: number;
+    Submitted: number;
+    UR: number;
+    D: number;
+    C: number;
+    B: number;
+    A: number;
+  }[];
+}> = ({ rows }) => {
+  return (
+    <div className="bg-white rounded-2xl shadow p-4 print:shadow-none">
+      <h2 className="text-lg font-semibold text-gray-900 mb-3">MATERIALS STATUS</h2>
+      <div className="overflow-x-auto">
+        <table className="min-w-full border border-gray-200 rounded-xl overflow-hidden">
+          <thead className="bg-gray-50 text-gray-700">
+            <tr>
+              <Th>Discipline</Th>
+              <Th>Total</Th>
+              <Th>Submitted</Th>
+              <Th>Under Review</Th>
+              <Th>D</Th>
+              <Th>C</Th>
+              <Th>B</Th>
+              <Th>A</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.section} className="even:bg-gray-50/50">
+                <Td className="font-medium text-gray-900">{r.section}</Td>
+                <Td>{r.Total}</Td>
+                <Td>{r.Submitted}</Td>
+                <Td>{r.UR}</Td>
+                <Td>{r.D}</Td>
+                <Td>{r.C}</Td>
+                <Td>{r.B}</Td>
+                <Td>{r.A}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const Th: React.FC<React.HTMLAttributes<HTMLTableCellElement>> = ({ children, className = "", ...props }) => (
+  <th className={`px-3 py-2 text-left text-sm font-semibold border-b border-gray-200 ${className}`} {...props}>
+    {children}
+  </th>
+);
+
+const Td: React.FC<React.HTMLAttributes<HTMLTableCellElement>> = ({ children, className = "", ...props }) => (
+  <td className={`px-3 py-2 text-sm text-gray-800 ${className}`} {...props}>
+    {children}
+  </td>
+);
+
+// ============================
+// app/globals.css
+// ============================
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Print-friendly tweaks */
+@media print {
+  html { background: white; }
+  body { background: white; }
+  .shadow { box-shadow: none !important; }
+}
+
+// ============================
+// next-env.d.ts (generated by Next.js normally, but included for completeness)
+// ============================
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/basic-features/typescript for more information
+
+// ============================
+// README.md
+// ============================
+# Engineering Status – Material Submission (Dashboard)
+
+Interactive, printable dashboard built with **Next.js (App Router)**, **Tailwind CSS**, and **Recharts**. Includes live-editable inputs, CSV export, and PNG export of the dashboard.
+
+## Quick start
+```bash
+npm install
+npm run dev
+```
+Visit http://localhost:3000
+
+## Deploy (Vercel)
+1. Push this repo to GitHub.
+2. Go to https://vercel.com → **New Project** → import the repo.
+3. Framework detected: *Next.js*. Click **Deploy**.
+
+That's it. You’ll get a `*.vercel.app` URL.
